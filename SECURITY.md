@@ -4,9 +4,9 @@
 
 We release updates to fix security issues. The latest version of this project is actively supported. Older versions may not receive security fixes.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| Latest  | ✅ Yes             |
+| Version | Supported            |
+| ------- | -------------------- |
+| Latest  | ✅ Yes               |
 | Older   | ❌ No (unless noted) |
 
 ## Reporting a Vulnerability
