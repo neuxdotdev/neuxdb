@@ -1,0 +1,14 @@
+[package]
+name = "neuxdb"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+age = "0.11.3"
+age-crypto = "0.1.0"
+age-setup = "0.1.0"
+anyhow = "1.0.102"
+clap = { version = "4.6.1", features = ["derive"] }
+csv = "1.4.0"
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.18"
