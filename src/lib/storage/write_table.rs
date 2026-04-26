@@ -4,7 +4,7 @@ use crate::types::Row;
 use csv::WriterBuilder;
 use std::fs;
 pub fn write_table(name: &str, headers: &[String], rows: &[Row]) -> Result<()> {
-    let path = table_path(name);
+    let path = table_path(name)?;
     let mut buf = Vec::new();
     {
         let mut wtr = WriterBuilder::new()
