@@ -1,9 +1,12 @@
 use super::execute_query::execute_query;
 use crate::error::Result;
-use std::fs;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 pub fn run_script(path: &str) -> Result<()> {
-    let content = fs::read_to_string(path)?;
-    for (line_no, line) in content.lines().enumerate() {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    for (line_no, line_result) in reader.lines().enumerate() {
+        let line = line_result?;
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
