@@ -3,7 +3,7 @@ use crate::error::{NeuxError, Result};
 use csv::WriterBuilder;
 use std::path::Path;
 pub fn create_table(name: &str, columns: &[String]) -> Result<()> {
-    let path = table_path(name);
+    let path = table_path(name)?;
     if Path::new(&path).exists() {
         return Err(NeuxError::TableAlreadyExists(name.to_string()));
     }
