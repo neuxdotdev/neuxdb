@@ -4,7 +4,7 @@ use crate::types::{Row, Value};
 use csv::ReaderBuilder;
 use std::fs;
 pub fn read_table(name: &str) -> Result<(Vec<String>, Vec<Row>)> {
-    let path = table_path(name);
+    let path = table_path(name)?;
     if !path.exists() {
         return Err(NeuxError::TableNotFound(name.to_string()));
     }
