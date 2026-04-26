@@ -4,7 +4,8 @@ use clap::Parser;
 #[command(
     name = "neuxdb",
     about = "Super simple encrypted database",
-    version = "0.2.0"
+    version = "0.1.0",
+    arg_required_else_help = true
 )]
 pub struct Cli {
     #[command(subcommand)]
