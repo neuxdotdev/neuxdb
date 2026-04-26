@@ -2,13 +2,64 @@
 name = "neuxdb"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.85.0"
+description = "A super simple, embedded, encrypted database like SQLite, using pipe-separated files and age encryption."
+authors = ["neuxdotdev <neuxdev1@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/neuxdotdev/neuxdb"
+homepage = "https://github.com/neuxdotdev/neuxdb"
+documentation = "https://docs.rs/neuxdb"
+readme = "README.md"
+keywords = ["database", "embedded", "encryption", "age", "cli"]
+categories = ["database", "command-line-utilities", "cryptography"]
+exclude = [
+    "/.github",
+    "/.vscode",
+    "/.idea",
+    "/target",
+    "/.git",
+    "*.rs.bak",
+    "Cargo.lock",
+    "tests/fixtures/*.tmp",
+    "bench/**/*",
+    "example/**/*"
+]
+include = [
+    "/src/**/*",
+    "/Cargo.toml",
+    "/README.md",
+    "/LICENSE*",
+    "/CODE_OF_CONDUCT.md",
+    "/CONTRIBUTING.md",
+    "/SECURITY.md"
+]
+autobins = false
+autolib = true
+
+[[bin]]
+name = "neuxdb"
+path = "src/main.rs"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-age = "0.11.3"
+age = { version = "0.11.3", features = ["armor"] }
 age-crypto = "0.1.0"
 age-setup = "0.1.0"
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive"] }
 csv = "1.4.0"
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
 thiserror = "2.0.18"
+
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }   # optional for benchmarks
+serde_json = "1.0.149"
+
+[lints.rust]
+unsafe_code = "warn"
+unused = "warn"
+deprecated = "warn"
