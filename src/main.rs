@@ -7,7 +7,7 @@ mod lib;
 mod types;
 use clap::Parser;
 use error::Result;
-use types::cli::Cli;
+use types::commands::Cli;
 fn main() -> Result<()> {
     config::ensure_data_dir()?;
     let cli = Cli::parse();
