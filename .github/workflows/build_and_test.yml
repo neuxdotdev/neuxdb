@@ -1,4 +1,4 @@
-name: Rust
+name: Build And Testing
 on:
     push:
         branches: ['master']
