@@ -1,8 +1,10 @@
-use crate::config::{DATA_DIR, TABLE_EXT};
+use crate::config::CONFIG;
 use crate::error::Result;
 use std::fs;
 pub fn execute() -> Result<()> {
-    let data_dir = std::path::Path::new(DATA_DIR);
+    let cfg = CONFIG.read().unwrap();
+    let data_dir = &cfg.data_dir;
+    let ext = &cfg.table_ext;
     if !data_dir.exists() {
         println!("No tables found (database not initialized).");
         return Ok(());
@@ -11,7 +13,7 @@ pub fn execute() -> Result<()> {
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let path = e.path();
-            if path.extension().and_then(|ext| ext.to_str()) == Some(TABLE_EXT) {
+            if path.extension().and_then(|e| e.to_str()) == Some(ext.as_str()) {
                 path.file_stem().map(|s| s.to_string_lossy().to_string())
             } else {
                 None
