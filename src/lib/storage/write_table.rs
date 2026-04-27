@@ -1,4 +1,5 @@
-use crate::config::{table_path, DELIMITER};
+use crate::config;
+use crate::config::table_path;
 use crate::error::Result;
 use crate::types::Row;
 use csv::WriterBuilder;
@@ -8,7 +9,7 @@ pub fn write_table(name: &str, headers: &[String], rows: &[Row]) -> Result<()> {
     let mut buf = Vec::new();
     {
         let mut wtr = WriterBuilder::new()
-            .delimiter(DELIMITER)
+            .delimiter(config::delimiter_byte())
             .from_writer(&mut buf);
         wtr.write_record(headers)?;
         for row in rows {
