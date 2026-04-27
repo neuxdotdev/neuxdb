@@ -20,7 +20,20 @@ pub(super) fn tokenize(sql: &str) -> Vec<String> {
             tokens.push(s);
             continue;
         }
-        if "(),=*|".contains(ch) {
+        if ch == '!' || ch == '<' || ch == '>' || ch == '=' {
+            let mut op = String::new();
+            while let Some(&c) = chars.peek() {
+                if c == '!' || c == '<' || c == '>' || c == '=' {
+                    op.push(c);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            tokens.push(op);
+            continue;
+        }
+        if "(),*|;".contains(ch) {
             tokens.push(ch.to_string());
             chars.next();
             continue;
