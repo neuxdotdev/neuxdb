@@ -4,7 +4,7 @@ use crate::error::{NeuxDbError, Result};
 use crate::types::TableSchema;
 use csv::ReaderBuilder;
 use std::fs;
-pub(super) fn load_schema(name: &str) -> Result<TableSchema> {
+pub(crate) fn load_schema(name: &str) -> Result<TableSchema> {
     let schema_path = config::schema_path(name)?;
     if !schema_path.exists() {
         let path = config::table_path(name)?;
