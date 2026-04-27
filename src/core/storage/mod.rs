@@ -1,8 +1,8 @@
-pub mod create_tabel_scema;
+pub mod create_table_scema;
 mod load_scema;
-pub mod read_tabel;
+pub mod read_table;
 mod save_chema;
-pub mod write_tabel;
-pub use create_tabel_scema::create_table_schema;
-pub use read_tabel::read_table;
-pub use write_tabel::write_table;
+pub mod write_table;
+pub use create_table_scema::create_table_schema;
+pub use read_table::read_table;
+pub use write_table::write_table;
