@@ -1,4 +1,4 @@
-use crate::config::DELIMITER;
+use crate::config;
 use crate::error::{NeuxError, Result};
 use crate::lib::storage::read_table;
 use crate::types::Value;
@@ -25,7 +25,7 @@ pub fn select_rows(
     for (i, col) in selected_cols.iter().enumerate() {
         print!("{}", col);
         if i < selected_cols.len() - 1 {
-            print!("{}", DELIMITER as char);
+            print!("{}", config::delimiter_char());
         }
     }
     println!();
@@ -50,7 +50,7 @@ pub fn select_rows(
             for (i, &idx) in col_indices.iter().enumerate() {
                 print!("{}", row[idx]);
                 if i < col_indices.len() - 1 {
-                    print!("{}", DELIMITER as char);
+                    print!("{}", config::delimiter_char());
                 }
             }
             println!();
