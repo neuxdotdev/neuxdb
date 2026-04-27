@@ -1,23 +1,23 @@
 use super::unquote::unquote;
 use crate::core::syntax::{split_quoted, Statement};
-use crate::error::{NeuxDbError, Result};
+use crate::error::NeuxDbError;
 use crate::types::Value;
 use std::iter::Peekable;
 use std::slice::Iter;
-pub(super) fn parse_insert(iter: &mut Peekable<Iter<String>>) -> Result<Statement> {
+pub(super) fn parse_insert(iter: &mut Peekable<Iter<String>>) -> Result<Statement, NeuxDbError> {
     match iter.next() {
-        Some(t) if *t == "into" => {}
-        _ => return Err(NeuxDbError::Parse("Expected 'into' after INSERT".into())),
+        Some(t) if t.to_lowercase() == "into" => {}
+        _ => return Err(NeuxDbError::Parse("Expected 'INTO' after INSERT".into())),
     }
     let table = match iter.next() {
         Some(t) => t.clone(),
         None => return Err(NeuxDbError::Parse("Missing table name".into())),
     };
     match iter.next() {
-        Some(t) if *t == "values" => {}
+        Some(t) if t.to_lowercase() == "values" => {}
         _ => {
             return Err(NeuxDbError::Parse(
-                "Expected 'values' after table name".into(),
+                "Expected 'VALUES' after table name".into(),
             ))
         }
     }
