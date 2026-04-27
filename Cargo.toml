@@ -31,7 +31,8 @@ include = [
     "/LICENSE*",
     "/CODE_OF_CONDUCT.md",
     "/CONTRIBUTING.md",
-    "/SECURITY.md"
+    "/SECURITY.md",
+    "CHANGELOG.md"
 ]
 autolib = true
 
