@@ -1,11 +1,12 @@
 use crate::core::syntax::Statement;
-use crate::error::{NeuxDbError, Result};
+use crate::error::NeuxDbError;
+use std::collections::HashSet;
 use std::iter::Peekable;
 use std::slice::Iter;
-pub(super) fn parse_create(iter: &mut Peekable<Iter<String>>) -> Result<Statement> {
+pub(super) fn parse_create(iter: &mut Peekable<Iter<String>>) -> Result<Statement, NeuxDbError> {
     match iter.next() {
-        Some(t) if *t == "table" => {}
-        _ => return Err(NeuxDbError::Parse("Expected 'table' after CREATE".into())),
+        Some(t) if t.to_lowercase() == "table" => {}
+        _ => return Err(NeuxDbError::Parse("Expected 'TABLE' after CREATE".into())),
     }
     let name = match iter.next() {
         Some(n) => n.clone(),
@@ -26,6 +27,12 @@ pub(super) fn parse_create(iter: &mut Peekable<Iter<String>>) -> Result<Statemen
                 columns.push(col.clone());
             }
             None => return Err(NeuxDbError::Parse("Missing ')'".into())),
+        }
+    }
+    let mut seen = HashSet::new();
+    for col in &columns {
+        if !seen.insert(col.clone()) {
+            return Err(NeuxDbError::DuplicateColumn(col.clone()));
         }
     }
     Ok(Statement::CreateTable { name, columns })
