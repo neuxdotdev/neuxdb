@@ -1,4 +1,5 @@
-use crate::config::{table_path, DELIMITER};
+use crate::config;
+use crate::config::table_path;
 use crate::error::{NeuxError, Result};
 use crate::types::{Row, Value};
 use csv::ReaderBuilder;
@@ -11,7 +12,7 @@ pub fn read_table(name: &str) -> Result<(Vec<String>, Vec<Row>)> {
     let data = fs::read_to_string(&path)?;
     let plain = data;
     let mut rdr = ReaderBuilder::new()
-        .delimiter(DELIMITER)
+        .delimiter(config::delimiter_byte())
         .from_reader(plain.as_bytes());
     let headers = rdr.headers()?.iter().map(|s| s.to_string()).collect();
     let mut rows = Vec::new();
