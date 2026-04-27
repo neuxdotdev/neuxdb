@@ -1,11 +1,11 @@
-use crate::error::{NeuxError, Result};
+use crate::error::{NeuxDbError, Result};
 use std::path::{Path, PathBuf};
 const DATA_DIR: &str = "data";
 const DELIMITER: char = '|';
 const TABLE_EXT: &str = "nxdb";
 pub fn sanitize_table_name(name: &str) -> Result<String> {
     if name.is_empty() {
-        return Err(NeuxError::Parse("Table name cannot be empty".into()));
+        return Err(NeuxDbError::Parse("Table name cannot be empty".into()));
     }
     let path = Path::new(name);
     if path.components().any(|c| {
@@ -14,7 +14,7 @@ pub fn sanitize_table_name(name: &str) -> Result<String> {
             std::path::Component::ParentDir | std::path::Component::RootDir
         )
     }) {
-        return Err(NeuxError::Parse(format!(
+        return Err(NeuxDbError::Parse(format!(
             "Path traversal not allowed: '{}'",
             name
         )));
@@ -23,7 +23,7 @@ pub fn sanitize_table_name(name: &str) -> Result<String> {
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
-        return Err(NeuxError::Parse(format!(
+        return Err(NeuxDbError::Parse(format!(
             "Invalid character in table name '{}'",
             name
         )));
@@ -33,6 +33,10 @@ pub fn sanitize_table_name(name: &str) -> Result<String> {
 pub fn table_path(name: &str) -> Result<PathBuf> {
     let safe = sanitize_table_name(name)?;
     Ok(PathBuf::from(DATA_DIR).join(format!("{}.{}", safe, TABLE_EXT)))
+}
+pub fn schema_path(name: &str) -> Result<PathBuf> {
+    let safe = sanitize_table_name(name)?;
+    Ok(PathBuf::from(DATA_DIR).join(format!("{}.schema.json", safe)))
 }
 pub fn ensure_data_dir() -> Result<()> {
     std::fs::create_dir_all(DATA_DIR)?;
