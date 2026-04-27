@@ -3,7 +3,9 @@ use crate::config;
 use crate::error::{NeuxDbError, Result};
 use crate::types::{ColumnType, Row, Value};
 use csv::ReaderBuilder;
-use std::fs::{self, File};
+#[allow(unused_imports)]
+use fs2::FileExt;
+use std::fs::File;
 pub fn read_table(name: &str) -> Result<(Vec<String>, Vec<Row>)> {
     let path = config::table_path(name)?;
     if !path.exists() {
@@ -12,14 +14,11 @@ pub fn read_table(name: &str) -> Result<(Vec<String>, Vec<Row>)> {
     let file = File::open(&path)?;
     file.lock_shared()
         .map_err(|e| NeuxDbError::Lock(format!("Failed to acquire shared lock: {}", e)))?;
-    let data = fs::read_to_string(&path)?;
-    file.unlock()
-        .map_err(|e| NeuxDbError::Lock(format!("Failed to unlock: {}", e)))?;
-    let schema = load_schema(name)?;
     let mut rdr = ReaderBuilder::new()
         .delimiter(config::delimiter_byte())
-        .from_reader(data.as_bytes());
+        .from_reader(&file);
     let headers = rdr.headers()?.iter().map(|s| s.to_string()).collect();
+    let schema = load_schema(name)?;
     let mut rows = Vec::new();
     for result in rdr.records() {
         let record = result?;
@@ -40,5 +39,7 @@ pub fn read_table(name: &str) -> Result<(Vec<String>, Vec<Row>)> {
         }
         rows.push(row);
     }
+    file.unlock()
+        .map_err(|e| NeuxDbError::Lock(format!("Failed to unlock: {}", e)))?;
     Ok((headers, rows))
 }
