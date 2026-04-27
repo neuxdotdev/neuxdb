@@ -19,5 +19,15 @@ pub enum NeuxDbError {
     Schema(String),
     #[error("Lock error: {0}")]
     Lock(String),
+    #[error("Type mismatch: expected {expected} for column '{column}', got {found}")]
+    TypeMismatch {
+        expected: crate::types::ColumnType,
+        column: String,
+        found: crate::types::Value,
+    },
+    #[error("Duplicate column '{0}' in CREATE TABLE")]
+    DuplicateColumn(String),
+    #[error("Invalid LIKE pattern: {0}")]
+    InvalidLikePattern(String),
 }
 pub type Result<T> = std::result::Result<T, NeuxDbError>;
