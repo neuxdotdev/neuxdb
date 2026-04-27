@@ -33,6 +33,11 @@ impl From<&str> for Value {
         }
     }
 }
+impl From<String> for Value {
+    fn from(s: String) -> Self {
+        Value::from(s.as_str())
+    }
+}
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -42,3 +47,19 @@ impl fmt::Display for Value {
     }
 }
 pub type Row = Vec<Value>;
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum ColumnType {
+    Text,
+    Int,
+}
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TableSchema {
+    pub columns: Vec<String>,
+    pub types: Vec<ColumnType>,
+}
+impl TableSchema {
+    pub fn new(columns: Vec<String>) -> Self {
+        let types = vec![ColumnType::Text; columns.len()];
+        Self { columns, types }
+    }
+}
