@@ -3,7 +3,6 @@ use crate::config;
 use crate::error::{NeuxDbError, Result};
 use crate::types::{ColumnType, Row, Value};
 use csv::ReaderBuilder;
-
 use std::fs::{self, File};
 pub fn read_table(name: &str) -> Result<(Vec<String>, Vec<Row>)> {
     let path = config::table_path(name)?;
