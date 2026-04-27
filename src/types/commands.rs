@@ -12,6 +12,13 @@ pub struct Cli {
     pub command: TopLevelCommands,
 }
 #[derive(Subcommand)]
+pub enum ConfigCommands {
+    Show,
+    Get { key: String },
+    Set { key: String, value: String },
+    Reset { key: String },
+}
+#[derive(Subcommand)]
 pub enum TopLevelCommands {
     Database {
         #[command(subcommand)]
@@ -23,6 +30,10 @@ pub enum TopLevelCommands {
     },
     Run {
         file: PathBuf,
+    },
+    Config {
+        #[command(subcommand)]
+        cmd: ConfigCommands,
     },
 }
 #[derive(Subcommand)]
