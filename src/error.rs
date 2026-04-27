@@ -1,6 +1,6 @@
 use thiserror::Error;
 #[derive(Debug, Error)]
-pub enum NeuxError {
+pub enum NeuxDbError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("CSV error: {0}")]
@@ -15,5 +15,9 @@ pub enum NeuxError {
     ValueCountMismatch { expected: usize, actual: usize },
     #[error("Parse error: {0}")]
     Parse(String),
+    #[error("Schema error: {0}")]
+    Schema(String),
+    #[error("Lock error: {0}")]
+    Lock(String),
 }
-pub type Result<T> = std::result::Result<T, NeuxError>;
+pub type Result<T> = std::result::Result<T, NeuxDbError>;
