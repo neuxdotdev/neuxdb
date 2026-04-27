@@ -9,6 +9,7 @@ use clap::Parser;
 use error::Result;
 use types::commands::Cli;
 fn main() -> Result<()> {
+    config::init_config()?;
     config::ensure_data_dir()?;
     let cli = Cli::parse();
     cmd::handle_command(cli.command)
