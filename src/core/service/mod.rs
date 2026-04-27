@@ -1,4 +1,4 @@
-pub mod create_tabel;
+pub mod create_table;
 pub mod delete_rows;
 pub mod insert_rows;
 pub mod parse_assignment;
@@ -6,7 +6,7 @@ pub mod parse_condition;
 pub mod run_script;
 pub mod select_rows;
 pub mod update_rows;
-pub use create_tabel::create_table;
+pub use create_table::create_table;
 pub use delete_rows::delete_rows;
 pub use insert_rows::insert_row;
 pub use parse_assignment::parse_assignment;
