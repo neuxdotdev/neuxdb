@@ -1,20 +1,32 @@
 use crate::core::syntax::Statement;
 use crate::error::{NeuxDbError, Result};
-pub(super) fn parse_create(parts: &[&str]) -> Result<Statement> {
-    if parts.len() < 4 || parts[1] != "table" {
-        return Err(NeuxDbError::Parse(
-            "Syntax: CREATE TABLE table_name (col1, col2, ...)".into(),
-        ));
+use std::iter::Peekable;
+use std::slice::Iter;
+pub(super) fn parse_create(iter: &mut Peekable<Iter<String>>) -> Result<Statement> {
+    match iter.next() {
+        Some(t) if *t == "table" => {}
+        _ => return Err(NeuxDbError::Parse("Expected 'table' after CREATE".into())),
     }
-    let name = parts[2].to_string();
-    let rest = parts[3..].join(" ");
-    let open = rest
-        .find('(')
-        .ok_or_else(|| NeuxDbError::Parse("Missing '('".into()))?;
-    let close = rest
-        .rfind(')')
-        .ok_or_else(|| NeuxDbError::Parse("Missing ')'".into()))?;
-    let cols_str = &rest[open + 1..close];
-    let columns = cols_str.split(',').map(|s| s.trim().to_string()).collect();
+    let name = match iter.next() {
+        Some(n) => n.clone(),
+        None => return Err(NeuxDbError::Parse("Missing table name".into())),
+    };
+    match iter.peek() {
+        Some(s) if *s == "(" => {
+            iter.next();
+        }
+        _ => return Err(NeuxDbError::Parse("Missing '(' after table name".into())),
+    }
+    let mut columns = Vec::new();
+    loop {
+        match iter.next() {
+            Some(col) if *col == ")" => break,
+            Some(col) if *col == "," => continue,
+            Some(col) => {
+                columns.push(col.clone());
+            }
+            None => return Err(NeuxDbError::Parse("Missing ')'".into())),
+        }
+    }
     Ok(Statement::CreateTable { name, columns })
 }
