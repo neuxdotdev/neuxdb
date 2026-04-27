@@ -3,17 +3,18 @@ use crate::error::{NeuxDbError, Result};
 use crate::types::Row;
 use csv::WriterBuilder;
 use fs2::FileExt;
-use std::fs::{self, File};
+use std::fs::File;
 pub fn write_table(name: &str, headers: &[String], rows: &[Row]) -> Result<()> {
     let path = config::table_path(name)?;
-    let file = File::create(&path)?;
+    let dir = path.parent().unwrap();
+    let tmp_path = dir.join(format!(".{}.tmp", name));
+    let file = File::create(&tmp_path)?;
     file.lock_exclusive()
         .map_err(|e| NeuxDbError::Lock(format!("Failed to acquire exclusive lock: {}", e)))?;
-    let mut buf = Vec::new();
     {
         let mut wtr = WriterBuilder::new()
             .delimiter(config::delimiter_byte())
-            .from_writer(&mut buf);
+            .from_writer(&file);
         wtr.write_record(headers)?;
         for row in rows {
             let str_row: Vec<String> = row.iter().map(|v| v.to_string()).collect();
@@ -21,10 +22,6 @@ pub fn write_table(name: &str, headers: &[String], rows: &[Row]) -> Result<()> {
         }
         wtr.flush()?;
     }
-    let plain =
-        String::from_utf8(buf).map_err(|e| NeuxDbError::Parse(format!("Invalid UTF-8: {}", e)))?;
-    fs::write(&path, plain)?;
-    file.unlock()
-        .map_err(|e| NeuxDbError::Lock(format!("Failed to unlock: {}", e)))?;
+    std::fs::rename(&tmp_path, &path)?;
     Ok(())
 }
