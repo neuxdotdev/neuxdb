@@ -2,8 +2,7 @@ pub fn split_quoted(s: &str, delim: char) -> Vec<String> {
     let mut result = Vec::new();
     let mut current = String::new();
     let mut in_quote = false;
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
+    for c in s.chars() {
         if c == '\'' && !in_quote {
             in_quote = true;
             current.push(c);
