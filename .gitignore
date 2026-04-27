@@ -1,4 +1,5 @@
 /target
 /dev/
-tmp
+tmp.diff
 a
+/tmp
