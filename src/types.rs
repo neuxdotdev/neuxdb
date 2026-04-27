@@ -17,7 +17,7 @@ impl Value {
             _ => None,
         }
     }
-    pub fn to_string(&self) -> String {
+    pub fn to_like_string(&self) -> String {
         match self {
             Value::Text(s) => s.clone(),
             Value::Int(i) => i.to_string(),
@@ -52,6 +52,14 @@ pub enum ColumnType {
     Text,
     Int,
 }
+impl fmt::Display for ColumnType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ColumnType::Text => write!(f, "Text"),
+            ColumnType::Int => write!(f, "Int"),
+        }
+    }
+}
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TableSchema {
     pub columns: Vec<String>,
@@ -61,5 +69,20 @@ impl TableSchema {
     pub fn new(columns: Vec<String>) -> Self {
         let types = vec![ColumnType::Text; columns.len()];
         Self { columns, types }
+    }
+    pub fn validate_value(&self, col_index: usize, value: &Value) -> crate::error::Result<()> {
+        if col_index >= self.types.len() {
+            return Ok(());
+        }
+        let expected_type = &self.types[col_index];
+        match (expected_type, value) {
+            (ColumnType::Int, Value::Int(_)) => Ok(()),
+            (ColumnType::Text, Value::Text(_)) => Ok(()),
+            _ => Err(crate::error::NeuxDbError::TypeMismatch {
+                expected: expected_type.clone(),
+                column: self.columns[col_index].clone(),
+                found: value.clone(),
+            }),
+        }
     }
 }
