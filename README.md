@@ -26,7 +26,6 @@ Add to `Cargo.toml`:
 [dependencies]
 neuxdb = "0.1.0"
 ```
-````
 
 _(Ensure dependencies `thiserror`, `serde`, `serde_json`, `csv`, and `fs2` are present)_
 
