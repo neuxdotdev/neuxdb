@@ -1,88 +1,40 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Value {
-    Text(String),
     Int(i64),
+    Text(String),
 }
 impl Value {
-    pub fn as_text(&self) -> Option<&str> {
+    pub fn to_string_cmp(&self) -> String {
         match self {
-            Value::Text(s) => Some(s),
-            _ => None,
-        }
-    }
-    pub fn as_int(&self) -> Option<i64> {
-        match self {
-            Value::Int(i) => Some(*i),
-            _ => None,
-        }
-    }
-    pub fn to_like_string(&self) -> String {
-        match self {
-            Value::Text(s) => s.clone(),
             Value::Int(i) => i.to_string(),
+            Value::Text(s) => s.clone(),
         }
-    }
-}
-impl From<&str> for Value {
-    fn from(s: &str) -> Self {
-        if let Ok(i) = s.parse::<i64>() {
-            Value::Int(i)
-        } else {
-            Value::Text(s.to_string())
-        }
-    }
-}
-impl From<String> for Value {
-    fn from(s: String) -> Self {
-        Value::from(s.as_str())
     }
 }
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Value::Text(s) => write!(f, "{}", s),
             Value::Int(i) => write!(f, "{}", i),
+            Value::Text(s) => write!(f, "{}", s),
         }
     }
 }
 pub type Row = Vec<Value>;
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ColumnType {
-    Text,
     Int,
+    Text,
 }
-impl fmt::Display for ColumnType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ColumnType::Text => write!(f, "Text"),
-            ColumnType::Int => write!(f, "Int"),
-        }
-    }
-}
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TableSchema {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Schema {
     pub columns: Vec<String>,
     pub types: Vec<ColumnType>,
 }
-impl TableSchema {
+impl Schema {
     pub fn new(columns: Vec<String>) -> Self {
         let types = vec![ColumnType::Text; columns.len()];
         Self { columns, types }
-    }
-    pub fn validate_value(&self, col_index: usize, value: &Value) -> crate::error::Result<()> {
-        if col_index >= self.types.len() {
-            return Ok(());
-        }
-        let expected_type = &self.types[col_index];
-        match (expected_type, value) {
-            (ColumnType::Int, Value::Int(_)) => Ok(()),
-            (ColumnType::Text, Value::Text(_)) => Ok(()),
-            _ => Err(crate::error::NeuxDbError::TypeMismatch {
-                expected: expected_type.clone(),
-                column: self.columns[col_index].clone(),
-                found: value.clone(),
-            }),
-        }
     }
 }
