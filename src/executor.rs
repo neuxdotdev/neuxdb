@@ -106,8 +106,8 @@ fn project_rows(
 fn eval_expr(row: &[Value], headers: &[String], expr: &Expr) -> bool {
     match expr {
         Expr::True => true,
-        Expr::Eq(col, val) => compare(row, headers, col, val, |a, b| a == b),
-        Expr::Ne(col, val) => compare(row, headers, col, val, |a, b| a != b),
+        Expr::Eq(col, val) => compare(row, headers, col, val, loose_eq),
+        Expr::Ne(col, val) => compare(row, headers, col, val, |a, b| !loose_eq(a, b)),
         Expr::Gt(col, val) => compare(row, headers, col, val, |a, b| a > b),
         Expr::Ge(col, val) => compare(row, headers, col, val, |a, b| a >= b),
         Expr::Lt(col, val) => compare(row, headers, col, val, |a, b| a < b),
@@ -118,6 +118,13 @@ fn eval_expr(row: &[Value], headers: &[String], expr: &Expr) -> bool {
         },
         Expr::And(a, b) => eval_expr(row, headers, a) && eval_expr(row, headers, b),
         Expr::Or(a, b) => eval_expr(row, headers, a) || eval_expr(row, headers, b),
+    }
+}
+fn loose_eq(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Int(i1), Value::Int(i2)) => i1 == i2,
+        (Value::Text(s1), Value::Text(s2)) => s1 == s2,
+        _ => a.to_string_cmp() == b.to_string_cmp(),
     }
 }
 fn compare<F>(row: &[Value], headers: &[String], col: &str, val: &Value, cmp: F) -> bool
