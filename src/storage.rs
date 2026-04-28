@@ -1,26 +1,17 @@
+use crate::config;
 use crate::error::{DbError, Result};
 use crate::types::{ColumnType, Row, Schema, Value};
 use csv::{ReaderBuilder, WriterBuilder};
 use fs2::FileExt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Seek, SeekFrom};
-use std::path::PathBuf;
-fn get_data_dir() -> String {
-    std::env::var("NEUXDB_DATA_DIR").unwrap_or_else(|_| "data".to_string())
-}
-const EXT: &str = "nxdb";
-const SCHEMA_EXT: &str = "schema.json";
-pub fn init() -> Result<()> {
-    fs::create_dir_all(get_data_dir())?;
-    Ok(())
-}
-fn table_path(name: &str) -> Result<PathBuf> {
+fn table_path_local(name: &str) -> Result<std::path::PathBuf> {
     sanitize(name)?;
-    Ok(PathBuf::from(get_data_dir()).join(format!("{}.{}", name, EXT)))
+    Ok(config::table_path(name))
 }
-fn schema_path(name: &str) -> Result<PathBuf> {
+fn schema_path_local(name: &str) -> Result<std::path::PathBuf> {
     sanitize(name)?;
-    Ok(PathBuf::from(get_data_dir()).join(format!("{}.{}", name, SCHEMA_EXT)))
+    Ok(config::schema_path(name))
 }
 fn sanitize(name: &str) -> Result<()> {
     if name.is_empty() || name.chars().any(|c| !c.is_ascii_alphanumeric() && c != '_') {
@@ -32,8 +23,8 @@ pub fn transact<F>(name: &str, f: F) -> Result<()>
 where
     F: FnOnce(&Schema, &mut Vec<Row>) -> Result<()>,
 {
-    let tp = table_path(name)?;
-    let sp = schema_path(name)?;
+    let tp = table_path_local(name)?;
+    let sp = schema_path_local(name)?;
     if !tp.exists() {
         return Err(DbError::TableNotFound(name.into()));
     }
@@ -47,8 +38,8 @@ where
     Ok(())
 }
 pub fn read_only(name: &str) -> Result<(Schema, Vec<String>, Vec<Row>)> {
-    let tp = table_path(name)?;
-    let sp = schema_path(name)?;
+    let tp = table_path_local(name)?;
+    let sp = schema_path_local(name)?;
     if !tp.exists() {
         return Err(DbError::TableNotFound(name.into()));
     }
@@ -61,8 +52,8 @@ pub fn read_only(name: &str) -> Result<(Schema, Vec<String>, Vec<Row>)> {
     Ok((schema, headers, rows))
 }
 pub fn create_table(name: &str, columns: Vec<String>) -> Result<()> {
-    let tp = table_path(name)?;
-    let sp = schema_path(name)?;
+    let tp = table_path_local(name)?;
+    let sp = schema_path_local(name)?;
     if tp.exists() {
         return Err(DbError::TableExists(name.into()));
     }
@@ -73,15 +64,15 @@ pub fn create_table(name: &str, columns: Vec<String>) -> Result<()> {
     file.lock_exclusive()
         .map_err(|e| DbError::Lock(e.to_string()))?;
     let mut wtr = WriterBuilder::new()
-        .delimiter(b'|')
+        .delimiter(config::get_delimiter())
         .from_writer(BufWriter::new(&file));
     wtr.write_record(&schema.columns)?;
     wtr.flush()?;
     Ok(())
 }
 pub fn drop_table(name: &str) -> Result<()> {
-    let tp = table_path(name)?;
-    let sp = schema_path(name)?;
+    let tp = table_path_local(name)?;
+    let sp = schema_path_local(name)?;
     if tp.exists() {
         fs::remove_file(tp)?;
     }
@@ -92,9 +83,14 @@ pub fn drop_table(name: &str) -> Result<()> {
 }
 pub fn list_tables() -> Result<Vec<String>> {
     let mut tables = Vec::new();
-    for entry in fs::read_dir(get_data_dir())? {
+    let ext = config::get_table_ext();
+    for entry in fs::read_dir(config::get_base_path())? {
         let path = entry?.path();
-        if path.extension().map(|e| e == EXT).unwrap_or(false) {
+        if path
+            .extension()
+            .map(|e| e.to_string_lossy() == ext)
+            .unwrap_or(false)
+        {
             if let Some(stem) = path.file_stem() {
                 tables.push(stem.to_string_lossy().to_string());
             }
@@ -105,7 +101,7 @@ pub fn list_tables() -> Result<Vec<String>> {
 }
 fn read_csv(file: &File, schema: &Schema) -> Result<Vec<Row>> {
     let mut rdr = ReaderBuilder::new()
-        .delimiter(b'|')
+        .delimiter(config::get_delimiter())
         .has_headers(true)
         .from_reader(BufReader::new(file));
     let mut rows = Vec::new();
@@ -131,7 +127,7 @@ fn write_csv(file: &File, headers: &[String], rows: &[Row]) -> Result<()> {
     file.set_len(0)?;
     file.seek(SeekFrom::Start(0))?;
     let mut wtr = WriterBuilder::new()
-        .delimiter(b'|')
+        .delimiter(config::get_delimiter())
         .from_writer(BufWriter::new(&file));
     wtr.write_record(headers)?;
     for row in rows {
