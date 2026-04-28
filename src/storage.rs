@@ -5,20 +5,22 @@ use fs2::FileExt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Seek, SeekFrom};
 use std::path::PathBuf;
-const DATA_DIR: &str = "data";
+fn get_data_dir() -> String {
+    std::env::var("NEUXDB_DATA_DIR").unwrap_or_else(|_| "data".to_string())
+}
 const EXT: &str = "nxdb";
 const SCHEMA_EXT: &str = "schema.json";
 pub fn init() -> Result<()> {
-    fs::create_dir_all(DATA_DIR)?;
+    fs::create_dir_all(get_data_dir())?;
     Ok(())
 }
 fn table_path(name: &str) -> Result<PathBuf> {
     sanitize(name)?;
-    Ok(PathBuf::from(DATA_DIR).join(format!("{}.{}", name, EXT)))
+    Ok(PathBuf::from(get_data_dir()).join(format!("{}.{}", name, EXT)))
 }
 fn schema_path(name: &str) -> Result<PathBuf> {
     sanitize(name)?;
-    Ok(PathBuf::from(DATA_DIR).join(format!("{}.{}", name, SCHEMA_EXT)))
+    Ok(PathBuf::from(get_data_dir()).join(format!("{}.{}", name, SCHEMA_EXT)))
 }
 fn sanitize(name: &str) -> Result<()> {
     if name.is_empty() || name.chars().any(|c| !c.is_ascii_alphanumeric() && c != '_') {
@@ -90,7 +92,7 @@ pub fn drop_table(name: &str) -> Result<()> {
 }
 pub fn list_tables() -> Result<Vec<String>> {
     let mut tables = Vec::new();
-    for entry in fs::read_dir(DATA_DIR)? {
+    for entry in fs::read_dir(get_data_dir())? {
         let path = entry?.path();
         if path.extension().map(|e| e == EXT).unwrap_or(false) {
             if let Some(stem) = path.file_stem() {
