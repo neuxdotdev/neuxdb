@@ -1,46 +1,6 @@
 use crate::error::{DbError, Result};
+use crate::syntax::{Expr, Statement};
 use crate::types::Value;
-#[derive(Debug, Clone, PartialEq)]
-pub enum Statement {
-    CreateTable {
-        name: String,
-        columns: Vec<String>,
-    },
-    DropTable(String),
-    ShowTables,
-    Insert {
-        table: String,
-        values: Vec<Value>,
-    },
-    Select {
-        columns: Vec<String>,
-        table: String,
-        filter: Option<Expr>,
-    },
-    Update {
-        table: String,
-        set_col: String,
-        set_val: Value,
-        filter: Expr,
-    },
-    Delete {
-        table: String,
-        filter: Expr,
-    },
-}
-#[derive(Debug, Clone, PartialEq)]
-pub enum Expr {
-    True,
-    Eq(String, Value),
-    Ne(String, Value),
-    Gt(String, Value),
-    Ge(String, Value),
-    Lt(String, Value),
-    Le(String, Value),
-    Like(String, Value),
-    And(Box<Expr>, Box<Expr>),
-    Or(Box<Expr>, Box<Expr>),
-}
 pub fn parse(sql: &str) -> Result<Statement> {
     let tokens = tokenize(sql);
     let mut parser = Parser { tokens, pos: 0 };
@@ -82,42 +42,95 @@ impl Parser {
             "select" => self.parse_select(),
             "update" => self.parse_update(),
             "delete" => self.parse_delete(),
+            "use" => self.parse_use(),
+            "backup" => self.parse_backup(),
+            "check" => self.parse_check(),
             _ => Err(DbError::Parse(format!("Unknown command: {}", cmd))),
         }
     }
     fn parse_create(&mut self) -> Result<Statement> {
-        self.expect("table")?;
-        let name = self.consume()?;
+        let target = self.consume()?.to_lowercase();
         self.pos += 1;
-        self.expect("(")?;
-        let mut cols = Vec::new();
-        loop {
-            let tok = self.consume()?;
-            if tok == ")" {
+        match target.as_str() {
+            "table" => {
+                let name = self.consume()?;
                 self.pos += 1;
-                break;
+                self.expect("(")?;
+                let mut cols = Vec::new();
+                loop {
+                    let tok = self.consume()?;
+                    if tok == ")" {
+                        self.pos += 1;
+                        break;
+                    }
+                    if tok == "," {
+                        self.pos += 1;
+                        continue;
+                    }
+                    cols.push(tok);
+                    self.pos += 1;
+                }
+                Ok(Statement::CreateTable {
+                    name,
+                    columns: cols,
+                })
             }
-            if tok == "," {
+            "database" => {
+                let name = self.consume()?;
                 self.pos += 1;
-                continue;
+                Ok(Statement::CreateDatabase(name))
             }
-            cols.push(tok);
-            self.pos += 1;
+            _ => Err(DbError::Parse(
+                "Expected 'TABLE' or 'DATABASE' after CREATE".into(),
+            )),
         }
-        Ok(Statement::CreateTable {
-            name,
-            columns: cols,
-        })
     }
     fn parse_drop(&mut self) -> Result<Statement> {
+        let target = self.consume()?.to_lowercase();
+        self.pos += 1;
+        match target.as_str() {
+            "table" => {
+                let name = self.consume()?;
+                self.pos += 1;
+                Ok(Statement::DropTable(name))
+            }
+            "database" => {
+                let name = self.consume()?;
+                self.pos += 1;
+                Ok(Statement::DropDatabase(name))
+            }
+            _ => Err(DbError::Parse(
+                "Expected 'TABLE' or 'DATABASE' after DROP".into(),
+            )),
+        }
+    }
+    fn parse_show(&mut self) -> Result<Statement> {
+        let target = self.consume()?.to_lowercase();
+        self.pos += 1;
+        match target.as_str() {
+            "tables" => Ok(Statement::ShowTables),
+            "databases" => Ok(Statement::ShowDatabases),
+            _ => Err(DbError::Parse(
+                "Expected 'TABLES' or 'DATABASES' after SHOW".into(),
+            )),
+        }
+    }
+    fn parse_use(&mut self) -> Result<Statement> {
+        let name = self.consume()?;
+        self.pos += 1;
+        Ok(Statement::UseDatabase(name))
+    }
+    fn parse_backup(&mut self) -> Result<Statement> {
         self.expect("table")?;
         let name = self.consume()?;
         self.pos += 1;
-        Ok(Statement::DropTable(name))
+        Ok(Statement::Backup { table: name })
     }
-    fn parse_show(&mut self) -> Result<Statement> {
-        self.expect("tables")?;
-        Ok(Statement::ShowTables)
+    fn parse_check(&mut self) -> Result<Statement> {
+        self.expect("table")?;
+        let name = self.consume()?;
+        self.pos += 1;
+        Ok(Statement::CheckIntegrity { table: name })
     }
     fn parse_insert(&mut self) -> Result<Statement> {
         self.expect("into")?;
