@@ -1,9 +1,32 @@
+use crate::admin;
 use crate::error::{DbError, Result};
-use crate::parser::{Expr, Statement};
+use crate::manager;
 use crate::storage;
+use crate::syntax::{Expr, Statement};
 use crate::types::{Row, Schema, Value};
 pub fn execute(stmt: Statement) -> Result<String> {
     match stmt {
+        Statement::CreateDatabase(name) => {
+            manager::create_database(&name)?;
+            Ok(format!("Database '{}' created.", name))
+        }
+        Statement::DropDatabase(name) => {
+            manager::drop_database(&name)?;
+            Ok(format!("Database '{}' dropped.", name))
+        }
+        Statement::ShowDatabases => {
+            let dbs = manager::list_databases()?;
+            if dbs.is_empty() {
+                return Ok("No databases found.".into());
+            }
+            Ok(dbs.join("\n"))
+        }
+        Statement::UseDatabase(name) => {
+            manager::use_database(&name)?;
+            Ok(format!("Switched to database '{}'.", name))
+        }
+        Statement::Backup { table } => admin::backup_table(&table),
+        Statement::CheckIntegrity { table } => admin::check_integrity(&table),
         Statement::CreateTable { name, columns } => {
             storage::create_table(&name, columns)?;
             Ok(format!("Table '{}' created.", name))
