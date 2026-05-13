@@ -1,4 +1,3 @@
-```markdown
 # NeuxDB
 
 **Embedded encrypted database for Rust – simple, secure, and portable.**
@@ -38,7 +37,7 @@ where you need a local database that *just works*.
 
 ```toml
 [dependencies]
-neuxdb = "0.3"
+neuxdb = "0.3.1"
 ```
 
 NeuxDB uses a few well‑known cryptographic libraries (`age-crypto`, `sha2`, `hmac`, `pbkdf2`) and
