@@ -9,6 +9,15 @@ pub enum Value {
     Float(f64),
     Null,
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportFormat {
+    Csv,
+    Psv,
+    Json,
+    Html,
+    Markdown,
+    SqliteDump,
+}
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
