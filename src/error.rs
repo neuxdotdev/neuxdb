@@ -37,5 +37,7 @@ pub enum Error {
         expected: String,
         actual: String,
     },
+    #[error("CSV error: {0}")]
+    Csv(#[from] csv::Error),
 }
 pub type Result<T> = std::result::Result<T, Error>;
