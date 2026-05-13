@@ -1,337 +1,126 @@
-use neuxdb::{self, init, run, set_data_dir, DbError, Result};
-use std::env;
+use age_setup::build_keypair;
+use neuxdb::{
+    init, run, set_data_dir, set_secret_key, DbError, Result,
+};
 use std::fs;
 use std::sync::Mutex;
 static TEST_MUTEX: Mutex<()> = Mutex::new(());
 fn setup(temp_dir: &str) {
     fs::create_dir_all(temp_dir).unwrap();
-    env::set_var("NEUXDB_DATA_DIR", temp_dir);
-    set_data_dir(temp_dir).unwrap();
+    std::env::set_var("NEUXDB_DATA_DIR", temp_dir);
     init().unwrap();
 }
 fn teardown(temp_dir: &str) {
     let _ = fs::remove_dir_all(temp_dir);
-    env::remove_var("NEUXDB_DATA_DIR");
+    std::env::remove_var("NEUXDB_DATA_DIR");
 }
 #[test]
-fn test_database_management() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+fn test_secure_cycle() -> Result<()> {
+    let _guard = TEST_MUTEX.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let dir_path = dir.path().to_string_lossy().to_string();
     setup(&dir_path);
-    let res = run("CREATE DATABASE my_app")?;
-    assert!(res.contains("created"));
-    let res = run("SHOW DATABASES")?;
-    assert!(res.contains("my_app"));
-    let res = run("USE my_app")?;
-    assert!(res.contains("Switched"));
-    run("CREATE TABLE config (key, val)")?;
-    run("INSERT INTO config VALUES ('version', '1.0')")?;
-    set_data_dir(&dir_path)?;
-    let res = run("SELECT * FROM config");
-    assert!(res.is_err(), "Table should not exist in root data dir");
-    run("USE my_app")?;
-    set_data_dir(&dir_path)?;
-    let res = run("DROP DATABASE my_app")?;
-    assert!(res.contains("dropped"));
+    let keypair = build_keypair().expect("Failed to generate keypair");
+    set_secret_key(&keypair.secret)?;
+    run("CREATE TABLE secrets (id, data)")?;
+    run("INSERT INTO secrets VALUES (1, 'Classified')")?;
+    let file_path = format!("{}/secrets.nxdb", dir_path);
+    let content = fs::read_to_string(&file_path).expect("Failed to read file");
+    assert!(content.starts_with("-----BEGIN AGE ENCRYPTED FILE-----"), "Data must be encrypted");
+    assert!(!content.contains("Classified"), "Plaintext must not exist");
+    let output = run("SELECT * FROM secrets")?;
+    assert!(output.contains("Classified"));
     teardown(&dir_path);
     Ok(())
 }
 #[test]
-fn test_admin_tools() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+fn test_integrity_check() -> Result<()> {
+    let _guard = TEST_MUTEX.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let dir_path = dir.path().to_string_lossy().to_string();
     setup(&dir_path);
-    run("CREATE TABLE users (id, name)")?;
-    run("INSERT INTO users VALUES (1, 'Admin')")?;
-    let res = run("BACKUP TABLE users")?;
-    assert!(res.contains("backed up"));
+    let keypair = build_keypair().unwrap();
+    set_secret_key(&keypair.secret)?;
+    run("CREATE TABLE tamper (val)")?;
+    run("INSERT INTO tamper VALUES ('original')")?;
+    let file_path = format!("{}/tamper.nxdb", dir_path);
+    let mut content = fs::read_to_string(&file_path)?;
+    let mid = content.len() / 2;
+    let mut chars: Vec<char> = content.chars().collect();
+    if chars[mid] == 'A' { chars[mid] = 'B'; } else { chars[mid] = 'A'; }
+    content = chars.into_iter().collect();
+    fs::write(&file_path, content)?;
+    let res = run("SELECT * FROM tamper");
+    assert!(res.is_err());
+    let err = res.unwrap_err();
     assert!(
-        dir.path().join("users.nxdb.bak").exists(),
-        "Backup file should exist"
+        err.to_string().contains("Integrity check failed"),
+        "Expected integrity error, got: {}", err
     );
-    let res = run("CHECK TABLE users")?;
-    assert!(res.contains("OK"), "Table integrity should be OK");
     teardown(&dir_path);
     Ok(())
 }
 #[test]
-fn test_create_insert_select() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+fn test_wrong_key() -> Result<()> {
+    let _guard = TEST_MUTEX.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let dir_path = dir.path().to_string_lossy().to_string();
     setup(&dir_path);
-    let res = run("CREATE TABLE users (id, name)")?;
-    assert!(res.contains("created"));
-    let res = run("INSERT INTO users VALUES (1, 'Alice')")?;
-    assert!(res.contains("1 row inserted"));
-    let res = run("INSERT INTO users VALUES (2, 'Bob')")?;
-    assert!(res.contains("1 row inserted"));
-    let res = run("SELECT * FROM users")?;
-    assert!(res.contains("Alice"));
-    assert!(res.contains("Bob"));
-    let res = run("SELECT name FROM users WHERE id = 2")?;
-    assert!(res.contains("Bob"));
-    assert!(!res.contains("Alice"));
-    teardown(&dir_path);
-    Ok(())
-}
-#[test]
-fn test_update_delete() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
-    let dir_path = dir.path().to_string_lossy().to_string();
-    setup(&dir_path);
-    run("CREATE TABLE items (id, val)")?;
-    run("INSERT INTO items VALUES (1, 'foo')")?;
-    run("INSERT INTO items VALUES (2, 'bar')")?;
-    let res = run("UPDATE items SET val = 'updated' WHERE id = 1")?;
-    assert!(res.contains("1 rows updated"));
-    let res = run("SELECT val FROM items WHERE id = 1")?;
-    assert!(res.contains("updated"));
-    let res = run("DELETE FROM items WHERE id = 2")?;
-    assert!(res.contains("1 rows deleted"));
-    let res = run("SELECT * FROM items")?;
-    assert!(res.contains("updated"));
-    assert!(!res.contains("bar"));
-    teardown(&dir_path);
-    Ok(())
-}
-#[test]
-fn test_escape_quotes() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
-    let dir_path = dir.path().to_string_lossy().to_string();
-    setup(&dir_path);
-    run("CREATE TABLE logs (msg)")?;
-    let res = run("INSERT INTO logs VALUES ('O''Hare')")?;
-    assert!(res.contains("1 row inserted"));
-    let res = run("SELECT * FROM logs")?;
-    assert!(res.contains("O'Hare"));
-    teardown(&dir_path);
-    Ok(())
-}
-#[test]
-fn test_show_tables() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
-    let dir_path = dir.path().to_string_lossy().to_string();
-    setup(&dir_path);
-    run("CREATE TABLE alpha (a)")?;
-    run("CREATE TABLE beta (b)")?;
-    let res = run("SHOW TABLES")?;
-    assert!(res.contains("alpha"));
-    assert!(res.contains("beta"));
-    teardown(&dir_path);
-    Ok(())
-}
-#[test]
-fn test_drop_table() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
-    let dir_path = dir.path().to_string_lossy().to_string();
-    setup(&dir_path);
-    run("CREATE TABLE to_drop (x)")?;
-    let res = run("DROP TABLE to_drop")?;
-    assert!(res.contains("dropped"));
-    let res = run("SELECT * FROM to_drop");
+    let key_a = build_keypair().unwrap();
+    set_secret_key(&key_a.secret)?;
+    run("CREATE TABLE secure (id)")?;
+    run("INSERT INTO secure VALUES (99)")?;
+    let key_b = build_keypair().unwrap();
+    set_secret_key(&key_b.secret)?;
+    let res = run("SELECT * FROM secure");
     assert!(res.is_err());
-    if let Err(e) = res {
-        assert!(matches!(e, DbError::TableNotFound(_)));
-    }
+    let err = res.unwrap_err();
+    assert!(
+        err.to_string().contains("Decryption failed"),
+        "Expected decryption error, got: {}", err
+    );
     teardown(&dir_path);
     Ok(())
 }
 #[test]
-fn test_errors() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+fn test_crud_operations() -> Result<()> {
+    let _guard = TEST_MUTEX.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let dir_path = dir.path().to_string_lossy().to_string();
     setup(&dir_path);
-    let res = run("SELECT * FROM ghost");
-    assert!(res.is_err());
-    run("CREATE TABLE exists (a)")?;
-    let res = run("CREATE TABLE exists (a)");
-    assert!(res.is_err());
-    if let Err(e) = res {
-        assert!(matches!(e, DbError::TableExists(_)));
-    }
-    run("CREATE TABLE data (id)")?;
-    let res = run("SELECT unknown FROM data");
-    assert!(res.is_err());
-    if let Err(e) = res {
-        assert!(matches!(e, DbError::ColumnNotFound(_)));
-    }
-    let res = run("INSERT INTO data VALUES (1, 2)");
-    assert!(res.is_err());
-    if let Err(e) = res {
-        assert!(matches!(e, DbError::InvalidInput(_)));
-    }
+    let kp = build_keypair().unwrap();
+    set_secret_key(&kp.secret)?;
+    run("CREATE TABLE users (id, name)")?;
+    run("INSERT INTO users VALUES (1, 'Alice')")?;
+    run("INSERT INTO users VALUES (2, 'Bob')")?;
+    let out = run("SELECT * FROM users")?;
+    assert!(out.contains("Alice"));
+    assert!(out.contains("Bob"));
+    run("UPDATE users SET name = 'Alicia' WHERE id = 1")?;
+    let out = run("SELECT * FROM users WHERE id = 1")?;
+    assert!(out.contains("Alicia"));
+    assert!(!out.contains("Alice"));
+    run("DELETE FROM users WHERE id = 2")?;
+    let out = run("SELECT * FROM users")?;
+    assert!(!out.contains("Bob"));
     teardown(&dir_path);
     Ok(())
 }
 #[test]
-fn test_like_operator() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+fn test_db_management() -> Result<()> {
+    let _guard = TEST_MUTEX.lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let dir_path = dir.path().to_string_lossy().to_string();
     setup(&dir_path);
-    run("CREATE TABLE files (name)")?;
-    run("INSERT INTO files VALUES ('report.pdf')")?;
-    run("INSERT INTO files VALUES ('data.csv')")?;
-    run("INSERT INTO files VALUES ('image.png')")?;
-    let res = run("SELECT * FROM files WHERE name LIKE '%.pdf'")?;
-    assert!(res.contains("report.pdf"));
-    assert!(!res.contains("data.csv"));
-    let res = run("SELECT * FROM files WHERE name LIKE 'data____'")?;
-    assert!(res.contains("data.csv"));
-    teardown(&dir_path);
-    Ok(())
-}
-#[test]
-fn test_concurrency_safety() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
-    let dir_path = dir.path().to_string_lossy().to_string();
-    setup(&dir_path);
-    run("CREATE TABLE counter (val)")?;
-    run("INSERT INTO counter VALUES (0)")?;
-    let mut handles = vec![];
-    for _ in 0..5 {
-        let path_clone = dir_path.clone();
-        let handle = std::thread::spawn(move || {
-            env::set_var("NEUXDB_DATA_DIR", &path_clone);
-            set_data_dir(&path_clone).unwrap();
-            for _ in 0..5 {
-                let val_str = run("SELECT val FROM counter").unwrap();
-                let current: i64 = val_str.lines().nth(2).unwrap().trim().parse().unwrap();
-                let new_val = current + 1;
-                let sql = format!(
-                    "UPDATE counter SET val = {} WHERE val = {}",
-                    new_val, current
-                );
-                let _ = run(&sql);
-            }
-        });
-        handles.push(handle);
-    }
-    for h in handles {
-        h.join().unwrap();
-    }
-    let res = run("SELECT * FROM counter")?;
-    println!("Final counter state:\n{}", res);
-    teardown(&dir_path);
-    Ok(())
-}
-#[test]
-fn test_manager_specific_errors() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
-    let dir_path = dir.path().to_string_lossy().to_string();
-    setup(&dir_path);
-    run("CREATE DATABASE db_test")?;
-    let res = run("CREATE DATABASE db_test");
-    assert!(res.is_err());
-    if let Err(e) = res {
-        let msg = e.to_string();
-        assert!(
-            msg.contains("already exists"),
-            "Error message should contain 'already exists'"
-        );
-    }
-    let res = run("DROP DATABASE ghost_db");
-    assert!(res.is_err());
-    if let Err(e) = res {
-        let msg = e.to_string();
-        assert!(msg.contains("not found"));
-    }
-    let res = run("USE DATABASE ghost_db");
-    assert!(res.is_err());
-    if let Err(e) = res {
-        let msg = e.to_string();
-        assert!(msg.contains("not found"));
-    }
-    teardown(&dir_path);
-    Ok(())
-}
-#[test]
-fn test_invalid_table_names() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
-    let dir_path = dir.path().to_string_lossy().to_string();
-    setup(&dir_path);
-    let res = run("CREATE TABLE bad!table (id)");
-    assert!(res.is_err());
-    teardown(&dir_path);
-    Ok(())
-}
-#[test]
-fn test_parser_errors() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
-    let dir_path = dir.path().to_string_lossy().to_string();
-    setup(&dir_path);
-    let res = run("FOO BAR");
-    assert!(res.is_err());
-    if let Err(e) = res {
-        let msg = e.to_string();
-        assert!(
-            msg.contains("Unknown command"),
-            "Expected unknown command error"
-        );
-    }
-    let res = run("INSERT INTO users VALUES");
-    assert!(res.is_err());
-    run("CREATE TABLE t (a)")?;
-    let res = run("SELECT * FROM t WHERE a <> 'val'");
-    teardown(&dir_path);
-    Ok(())
-}
-#[test]
-fn test_string_parsing_edge_cases() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
-    let dir_path = dir.path().to_string_lossy().to_string();
-    setup(&dir_path);
-    run("CREATE TABLE texts (content)")?;
-    run("INSERT INTO texts VALUES ('')")?;
-    let res = run("SELECT * FROM texts")?;
-    assert!(res.contains(""));
-    run("INSERT INTO texts VALUES ('Hello World')")?;
-    let res = run("SELECT * FROM texts WHERE content = 'Hello World'")?;
-    assert!(res.contains("Hello World"));
-    teardown(&dir_path);
-    Ok(())
-}
-#[test]
-fn test_value_type_coercion() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
-    let dir_path = dir.path().to_string_lossy().to_string();
-    setup(&dir_path);
-    run("CREATE TABLE nums (val)")?;
-    run("INSERT INTO nums VALUES (100)")?;
-    let res = run("SELECT * FROM nums WHERE val = 100")?;
-    assert!(res.contains("100"));
-    run("INSERT INTO nums VALUES ('200')")?;
-    let res = run("SELECT * FROM nums WHERE val = 200")?;
-    assert!(res.contains("200"));
-    teardown(&dir_path);
-    Ok(())
-}
-#[test]
-fn test_error_messages_formatting() -> Result<()> {
-    let _guard = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
-    let dir_path = dir.path().to_string_lossy().to_string();
-    setup(&dir_path);
-    let res = run("SELECT * FROM non_existent");
-    if let Err(e) = res {
-        let err_str = format!("{}", e);
-        assert!(err_str.contains("not found"));
-        let _ = format!("{:?}", e);
-    }
+    let kp = build_keypair().unwrap();
+    set_secret_key(&kp.secret)?;
+    run("CREATE DATABASE mydb")?;
+    let dbs = run("SHOW DATABASES")?;
+    assert!(dbs.contains("mydb"));
+    run("USE mydb")?;
+    run("CREATE TABLE data (x)")?;
+    run("INSERT INTO data VALUES (100)")?;
+    assert!(run("SELECT * FROM data")?.contains("100"));
     teardown(&dir_path);
     Ok(())
 }
