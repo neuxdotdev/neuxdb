@@ -17,16 +17,9 @@ pub fn select(
     columns: Option<Vec<&str>>,
     filter: Option<&dyn Fn(&[Value]) -> bool>,
 ) -> Result<Vec<Vec<Value>>> {
-    let mut result = Vec::new();
-    for row in &table.rows {
-        if let Some(pred) = &filter {
-            if !pred(row) {
-                continue;
-            }
-        }
-        if let Some(cols) = &columns {
-            let indices: Vec<usize> = cols
-                .iter()
+    let indices: Option<Vec<usize>> = if let Some(cols) = &columns {
+        Some(
+            cols.iter()
                 .map(|c| {
                     table
                         .schema
@@ -35,11 +28,26 @@ pub fn select(
                         .position(|col_def| col_def.name == *c)
                         .ok_or_else(|| Error::ColumnNotFound(c.to_string()))
                 })
-                .collect::<Result<_>>()?;
-            let projected: Vec<Value> = indices.iter().map(|&i| row[i].clone()).collect();
-            result.push(projected);
-        } else {
-            result.push(row.clone());
+                .collect::<Result<Vec<_>>>()?,
+        )
+    } else {
+        None
+    };
+    let mut result = Vec::new();
+    for row in &table.rows {
+        if let Some(pred) = &filter {
+            if !pred(row) {
+                continue;
+            }
+        }
+        match &indices {
+            Some(idxs) => {
+                let projected: Vec<Value> = idxs.iter().map(|&i| row[i].clone()).collect();
+                result.push(projected);
+            }
+            None => {
+                result.push(row.clone());
+            }
         }
     }
     Ok(result)
