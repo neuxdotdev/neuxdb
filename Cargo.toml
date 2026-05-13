@@ -66,3 +66,9 @@ regex = "1.12.3"
 tempfile = "3.27.0"
 pbkdf2 = "0.13.0"
 hmac = "0.13.0"
+csv = "1.4.0"
+
+
+[[example]]
+name = "demo"
+path = "examples/demo.rs"
