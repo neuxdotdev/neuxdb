@@ -7,13 +7,16 @@ use crate::types::Value;
 use fs2::FileExt;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use tempfile::NamedTempFile;
 use zeroize::Zeroizing;
+static NAME_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(config::ALLOWED_NAME_REGEX).unwrap());
 #[derive(Debug, Serialize, Deserialize)]
 struct DbState {
     version: u8,
@@ -23,15 +26,15 @@ struct DbState {
 impl DbState {
     fn new() -> Self {
         Self {
-            version: 1,
+            version: config::DB_VERSION,
             tables: HashMap::new(),
             logs: vec![],
         }
     }
     fn validate(&self) -> Result<()> {
-        if self.version != 1 {
+        if self.version != config::DB_VERSION {
             return Err(Error::VersionMismatch {
-                expected: 1,
+                expected: config::DB_VERSION,
                 actual: self.version,
             });
         }
@@ -54,23 +57,23 @@ impl DbState {
         Ok(())
     }
 }
+#[allow(dead_code)]
 pub struct Database {
     path: PathBuf,
     passphrase: Zeroizing<String>,
     state: DbState,
     dirty: bool,
-    lock_file: fs::File,
+    lock_file: Option<fs::File>,
 }
 impl Database {
     fn validate_name(name: &str, max_len: usize, context: &str) -> Result<()> {
-        let re = Regex::new(config::ALLOWED_NAME_REGEX).unwrap();
         if name.is_empty() || name.len() > max_len {
             return Err(Error::InvalidInput(format!(
                 "{} name length must be 1..{}",
                 context, max_len
             )));
         }
-        if !re.is_match(name) {
+        if !NAME_REGEX.is_match(name) {
             return Err(Error::InvalidInput(format!(
                 "{} '{}' contains invalid characters. Allowed: letters, numbers, underscore, must start with letter or underscore",
                 context, name
@@ -114,8 +117,13 @@ impl Database {
         let mut temp = NamedTempFile::new_in(parent)?;
         temp.write_all(data)?;
         temp.flush()?;
-        temp.persist(path).map_err(|e| Error::Io(e.error))?;
-        Ok(())
+        match temp.persist(path) {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                fs::write(path, data)?;
+                Ok(())
+            }
+        }
     }
     pub fn create(path: impl Into<PathBuf>, passphrase: &str) -> Result<Self> {
         let path: PathBuf = path.into();
@@ -142,7 +150,7 @@ impl Database {
             passphrase: Zeroizing::new(passphrase.to_string()),
             state,
             dirty: false,
-            lock_file,
+            lock_file: Some(lock_file),
         })
     }
     pub fn open(path: impl Into<PathBuf>, passphrase: &str) -> Result<Self> {
@@ -160,20 +168,21 @@ impl Database {
             .map_err(|_| Error::DatabaseLocked)?;
         let ciphertext = fs::read(&path)?;
         let json = crypto::decrypt(&ciphertext, passphrase)?;
-        let state: DbState = serde_json::from_str(&json)?;
+        let state: DbState = serde_json::from_str(&*json)?;
         state.validate()?;
         Ok(Self {
             path,
             passphrase: Zeroizing::new(passphrase.to_string()),
             state,
             dirty: false,
-            lock_file,
+            lock_file: Some(lock_file),
         })
     }
     pub fn commit(&mut self) -> Result<()> {
         if !self.dirty {
             return Ok(());
         }
+        Self::validate_path(&self.path)?;
         let json = serde_json::to_string_pretty(&self.state)?;
         let encrypted = crypto::encrypt(&json, &self.passphrase)?;
         Self::atomic_write(&self.path, &encrypted)?;
@@ -188,15 +197,20 @@ impl Database {
                 config::MAX_COLUMNS_PER_TABLE
             )));
         }
+        let mut seen = HashSet::new();
         let mut col_defs = Vec::new();
-        let mut col_names_for_log = Vec::new();
         for (col_name, col_type) in &columns {
+            if !seen.insert(*col_name) {
+                return Err(Error::InvalidInput(format!(
+                    "Duplicate column name: {}",
+                    col_name
+                )));
+            }
             Self::validate_name(col_name, config::MAX_COLUMN_NAME_LEN, "Column")?;
             col_defs.push(ColumnDef {
                 name: col_name.to_string(),
                 col_type: *col_type,
             });
-            col_names_for_log.push((*col_name, *col_type));
         }
         if self.state.tables.contains_key(name) {
             return Err(Error::TableExists(name.to_string()));
@@ -207,9 +221,9 @@ impl Database {
         self.state.logs.push(LogEntry::new(
             "CREATE TABLE",
             name,
-            Some(format!("Columns: {:?}", col_names_for_log)),
+            Some(format!("Columns: {:?}", columns)),
         ));
-        log::trim_logs_if_needed(&mut self.state.logs);
+        log::trim_logs_if_needed(&mut self.state.logs, &self.path)?;
         self.dirty = true;
         Ok(())
     }
@@ -218,7 +232,7 @@ impl Database {
             self.state
                 .logs
                 .push(LogEntry::new("DROP TABLE", name, None));
-            log::trim_logs_if_needed(&mut self.state.logs);
+            log::trim_logs_if_needed(&mut self.state.logs, &self.path)?;
             self.dirty = true;
             Ok(())
         } else {
@@ -250,7 +264,7 @@ impl Database {
             .get_mut(table)
             .ok_or_else(|| Error::TableNotFound(table.to_string()))?;
         crate::data::insert(table_data, row, &mut self.state.logs)?;
-        log::trim_logs_if_needed(&mut self.state.logs);
+        log::trim_logs_if_needed(&mut self.state.logs, &self.path)?;
         self.dirty = true;
         Ok(())
     }
@@ -282,7 +296,7 @@ impl Database {
         let count =
             crate::data::update(table_data, filter, set_col, new_val, &mut self.state.logs)?;
         if count > 0 {
-            log::trim_logs_if_needed(&mut self.state.logs);
+            log::trim_logs_if_needed(&mut self.state.logs, &self.path)?;
             self.dirty = true;
         }
         Ok(count)
@@ -295,7 +309,7 @@ impl Database {
             .ok_or_else(|| Error::TableNotFound(table.to_string()))?;
         let removed = crate::data::delete(table_data, filter, &mut self.state.logs)?;
         if removed > 0 {
-            log::trim_logs_if_needed(&mut self.state.logs);
+            log::trim_logs_if_needed(&mut self.state.logs, &self.path)?;
             self.dirty = true;
         }
         Ok(removed)
