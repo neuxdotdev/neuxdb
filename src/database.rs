@@ -1,8 +1,11 @@
 use crate::config;
 use crate::crypto;
 use crate::error::{Error, Result};
+use crate::export;
+use crate::import;
 use crate::log::{self, LogEntry};
 use crate::table::{ColumnDef, ColumnType, TableData, TableSchema};
+use crate::types::ExportFormat;
 use crate::types::Value;
 use fs2::FileExt;
 use regex::Regex;
@@ -319,6 +322,42 @@ impl Database {
     }
     pub fn export_json(&self) -> Result<String> {
         serde_json::to_string_pretty(&self.state).map_err(Into::into)
+    }
+    pub fn export_table(
+        &self,
+        table: &str,
+        format: ExportFormat,
+        encrypt: bool,
+        passphrase: Option<&str>,
+    ) -> Result<Vec<u8>> {
+        let table_data = self
+            .state
+            .tables
+            .get(table)
+            .ok_or_else(|| Error::TableNotFound(table.to_string()))?;
+        export::export_table(table_data, format, encrypt, passphrase)
+    }
+    pub fn import_table(
+        &mut self,
+        table_name: &str,
+        data: &[u8],
+        format: ExportFormat,
+        encrypted: bool,
+        passphrase: Option<&str>,
+    ) -> Result<()> {
+        if self.state.tables.contains_key(table_name) {
+            return Err(Error::TableExists(table_name.to_string()));
+        }
+        let table_data = import::import_table(table_name, data, format, encrypted, passphrase)?;
+        self.state.tables.insert(table_name.to_string(), table_data);
+        self.state.logs.push(LogEntry::new(
+            "IMPORT TABLE",
+            table_name,
+            Some(format!("Format: {:?}", format)),
+        ));
+        log::trim_logs_if_needed(&mut self.state.logs, &self.path)?;
+        self.dirty = true;
+        Ok(())
     }
 }
 impl fmt::Debug for Database {
