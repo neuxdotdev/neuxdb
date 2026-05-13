@@ -78,8 +78,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 ```rust
 pub const DELIMITER: u8 = b'|';
-pub const HEADER_MAGIC: &str = "[NEUXDB:v1]";
-pub const INTEGRITY_PREFIX: &str = "SHA=";
 pub const FILE_EXTENSION: &str = "ndbx";
 pub const MAX_TABLE_NAME_LEN: usize = 64;
 pub const MAX_COLUMN_NAME_LEN: usize = 64;
@@ -87,47 +85,82 @@ pub const MAX_COLUMNS_PER_TABLE: usize = 100;
 pub const MAX_LOG_ENTRIES: usize = 10_000;
 pub const MIN_PASSPHRASE_LEN: usize = 8;
 pub const ALLOWED_NAME_REGEX: &str = r"^[a-zA-Z_][a-zA-Z0-9_]*$";
+pub const DB_VERSION: u8 = env!("CARGO_PKG_VERSION_MAJOR").as_bytes()[0] - b'0';
+
+pub fn header_magic(version: u8) -> String {
+    format!("[NEUXDB:v{}]", version)
+}
+pub const HMAC_PREFIX: &str = "HMAC=";
 ```
 ## src/crypto.rs
 
 ```rust
+use hmac::KeyInit;
 use crate::config;
 use crate::error::{Error, Result};
-use sha2::{Digest, Sha256};
-pub fn sha256_hex(data: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(data.as_bytes());
-    hex::encode(hasher.finalize())
+use hmac::{Hmac, Mac};
+use pbkdf2::pbkdf2_hmac;
+use sha2::Sha256;
+use zeroize::Zeroizing;
+type HmacSha256 = Hmac<Sha256>;
+fn derive_key(passphrase: &str, version: u8) -> Result<Vec<u8>> {
+    let mut key = vec![0u8; 32];
+    pbkdf2_hmac::<Sha256>(
+        passphrase.as_bytes(),
+        format!("neuxdb-v{}", version).as_bytes(),
+        100_000,
+        &mut key,
+    );
+    Ok(key)
 }
-pub fn seal(payload_json: &str) -> String {
-    let hash = sha256_hex(payload_json);
-    format!("{}SHA={}\n{}", config::HEADER_MAGIC, hash, payload_json)
+fn hmac_sha256_hex(key: &[u8], data: &str) -> Result<String> {
+    let mut mac = HmacSha256::new_from_slice(key).map_err(|e| Error::Crypto(e.to_string()))?;
+    mac.update(data.as_bytes());
+    let hmac = mac.finalize().into_bytes();
+    Ok(hex::encode(hmac))
 }
-pub fn unseal(payload: &str) -> Result<String> {
+pub fn seal(payload_json: &str, passphrase: &str) -> Result<String> {
+    let version = config::DB_VERSION;
+    let key = derive_key(passphrase, version)?;
+    let hmac_hex = hmac_sha256_hex(&key, payload_json)?;
+    Ok(format!(
+        "{}HMAC={}\n{}",
+        config::header_magic(version),
+        hmac_hex,
+        payload_json
+    ))
+}
+pub fn unseal(payload: &str, passphrase: &str) -> Result<Zeroizing<String>> {
     let newline_pos = payload
         .find('\n')
         .ok_or_else(|| Error::InvalidFormat("Missing header newline".into()))?;
     let header = &payload[..newline_pos];
     let json = &payload[newline_pos + 1..];
-    if !header.starts_with(config::HEADER_MAGIC) {
-        return Err(Error::InvalidFormat("Invalid magic header".into()));
+    if !header.starts_with("[NEUXDB:v") || !header.contains("]HMAC=") {
+        return Err(Error::InvalidFormat(
+            "Invalid or unsupported database format".into(),
+        ));
     }
-    let expected_hash = header
-        .trim_start_matches(config::HEADER_MAGIC)
-        .trim_start_matches(config::INTEGRITY_PREFIX);
-    let actual_hash = sha256_hex(json);
-    if expected_hash != actual_hash {
-        return Err(Error::Integrity("Data corrupted or tampered!".into()));
+    let version_start = header.find("v").unwrap() + 1;
+    let version_end = header.find("]").unwrap();
+    let version: u8 = header[version_start..version_end]
+        .parse()
+        .map_err(|_| Error::InvalidFormat("Invalid version number".into()))?;
+    let expected_hmac_hex = &header[header.find("HMAC=").unwrap() + 5..];
+    let key = derive_key(passphrase, version)?;
+    let computed_hmac_hex = hmac_sha256_hex(&key, json)?;
+    if expected_hmac_hex != computed_hmac_hex {
+        return Err(Error::Integrity("Data tampered or corrupted!".into()));
     }
-    Ok(json.to_string())
+    Ok(Zeroizing::new(json.to_string()))
 }
 pub fn encrypt(plaintext: &str, passphrase: &str) -> Result<Vec<u8>> {
-    let sealed = seal(plaintext);
+    let sealed = seal(plaintext, passphrase)?;
     let ciphertext = age_crypto::encrypt_with_passphrase(sealed.as_bytes(), passphrase)
         .map_err(|e| Error::Crypto(e.to_string()))?;
     Ok(ciphertext.to_vec())
 }
-pub fn decrypt(ciphertext: &[u8], passphrase: &str) -> Result<String> {
+pub fn decrypt(ciphertext: &[u8], passphrase: &str) -> Result<Zeroizing<String>> {
     let plain =
         age_crypto::decrypt_with_passphrase(ciphertext, passphrase).map_err(|e| match e {
             age_crypto::Error::Decrypt(_) => Error::InvalidPassword,
@@ -135,7 +168,7 @@ pub fn decrypt(ciphertext: &[u8], passphrase: &str) -> Result<String> {
         })?;
     let sealed = String::from_utf8(plain)
         .map_err(|_| Error::InvalidFormat("Payload is not UTF-8".into()))?;
-    unseal(&sealed)
+    unseal(&sealed, passphrase)
 }
 ```
 ## src/types.rs
@@ -193,7 +226,11 @@ impl From<f64> for Value {
 
 ```rust
 use crate::config;
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
@@ -216,11 +253,28 @@ impl LogEntry {
         }
     }
 }
-pub fn trim_logs_if_needed(logs: &mut Vec<LogEntry>) {
-    if logs.len() > config::MAX_LOG_ENTRIES {
-        let drain_up_to = logs.len() - config::MAX_LOG_ENTRIES;
-        logs.drain(0..drain_up_to);
+pub fn trim_logs_if_needed(logs: &mut Vec<LogEntry>, db_path: &Path) -> Result<()> {
+    if logs.len() <= config::MAX_LOG_ENTRIES {
+        return Ok(());
     }
+    let drain_up_to = logs.len() - config::MAX_LOG_ENTRIES;
+    let old_logs: Vec<LogEntry> = logs.drain(0..drain_up_to).collect();
+    let archive_path = db_path.with_extension("ndbx.log");
+    let json = serde_json::to_string(&old_logs)?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(archive_path)?;
+    writeln!(file, "--- Archived at {} ---", timestamp_now())?;
+    file.write_all(json.as_bytes())?;
+    file.write_all(b"\n")?;
+    Ok(())
+}
+fn timestamp_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 ```
 ## src/data.rs
@@ -245,16 +299,9 @@ pub fn select(
     columns: Option<Vec<&str>>,
     filter: Option<&dyn Fn(&[Value]) -> bool>,
 ) -> Result<Vec<Vec<Value>>> {
-    let mut result = Vec::new();
-    for row in &table.rows {
-        if let Some(pred) = &filter {
-            if !pred(row) {
-                continue;
-            }
-        }
-        if let Some(cols) = &columns {
-            let indices: Vec<usize> = cols
-                .iter()
+    let indices: Option<Vec<usize>> = if let Some(cols) = &columns {
+        Some(
+            cols.iter()
                 .map(|c| {
                     table
                         .schema
@@ -263,11 +310,26 @@ pub fn select(
                         .position(|col_def| col_def.name == *c)
                         .ok_or_else(|| Error::ColumnNotFound(c.to_string()))
                 })
-                .collect::<Result<_>>()?;
-            let projected: Vec<Value> = indices.iter().map(|&i| row[i].clone()).collect();
-            result.push(projected);
-        } else {
-            result.push(row.clone());
+                .collect::<Result<Vec<_>>>()?,
+        )
+    } else {
+        None
+    };
+    let mut result = Vec::new();
+    for row in &table.rows {
+        if let Some(pred) = &filter {
+            if !pred(row) {
+                continue;
+            }
+        }
+        match &indices {
+            Some(idxs) => {
+                let projected: Vec<Value> = idxs.iter().map(|&i| row[i].clone()).collect();
+                result.push(projected);
+            }
+            None => {
+                result.push(row.clone());
+            }
         }
     }
     Ok(result)
@@ -346,13 +408,16 @@ use crate::types::Value;
 use fs2::FileExt;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use tempfile::NamedTempFile;
 use zeroize::Zeroizing;
+static NAME_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(config::ALLOWED_NAME_REGEX).unwrap());
 #[derive(Debug, Serialize, Deserialize)]
 struct DbState {
     version: u8,
@@ -362,15 +427,15 @@ struct DbState {
 impl DbState {
     fn new() -> Self {
         Self {
-            version: 1,
+            version: config::DB_VERSION,
             tables: HashMap::new(),
             logs: vec![],
         }
     }
     fn validate(&self) -> Result<()> {
-        if self.version != 1 {
+        if self.version != config::DB_VERSION {
             return Err(Error::VersionMismatch {
-                expected: 1,
+                expected: config::DB_VERSION,
                 actual: self.version,
             });
         }
@@ -398,18 +463,17 @@ pub struct Database {
     passphrase: Zeroizing<String>,
     state: DbState,
     dirty: bool,
-    lock_file: fs::File,
+    lock_file: Option<fs::File>,
 }
 impl Database {
     fn validate_name(name: &str, max_len: usize, context: &str) -> Result<()> {
-        let re = Regex::new(config::ALLOWED_NAME_REGEX).unwrap();
         if name.is_empty() || name.len() > max_len {
             return Err(Error::InvalidInput(format!(
                 "{} name length must be 1..{}",
                 context, max_len
             )));
         }
-        if !re.is_match(name) {
+        if !NAME_REGEX.is_match(name) {
             return Err(Error::InvalidInput(format!(
                 "{} '{}' contains invalid characters. Allowed: letters, numbers, underscore, must start with letter or underscore",
                 context, name
@@ -453,8 +517,21 @@ impl Database {
         let mut temp = NamedTempFile::new_in(parent)?;
         temp.write_all(data)?;
         temp.flush()?;
-        temp.persist(path).map_err(|e| Error::Io(e.error))?;
-        Ok(())
+        match temp.persist(path) {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                fs::write(path, data)?;
+                Ok(())
+            }
+        }
+    }
+    fn lock_exclusive(&self) -> Result<()> {
+        if let Some(ref file) = self.lock_file {
+            file.lock_exclusive().map_err(|_| Error::DatabaseLocked)?;
+            Ok(())
+        } else {
+            Err(Error::NotOpen)
+        }
     }
     pub fn create(path: impl Into<PathBuf>, passphrase: &str) -> Result<Self> {
         let path: PathBuf = path.into();
@@ -474,14 +551,14 @@ impl Database {
         Self::atomic_write(&path, &encrypted)?;
         let lock_file = fs::OpenOptions::new().read(true).write(true).open(&path)?;
         lock_file
-            .try_lock_exclusive()
+            .lock_exclusive()
             .map_err(|_| Error::DatabaseLocked)?;
         Ok(Self {
             path,
             passphrase: Zeroizing::new(passphrase.to_string()),
             state,
             dirty: false,
-            lock_file,
+            lock_file: Some(lock_file),
         })
     }
     pub fn open(path: impl Into<PathBuf>, passphrase: &str) -> Result<Self> {
@@ -495,24 +572,26 @@ impl Database {
         }
         let lock_file = fs::OpenOptions::new().read(true).write(true).open(&path)?;
         lock_file
-            .try_lock_exclusive()
+            .lock_exclusive()
             .map_err(|_| Error::DatabaseLocked)?;
         let ciphertext = fs::read(&path)?;
         let json = crypto::decrypt(&ciphertext, passphrase)?;
-        let state: DbState = serde_json::from_str(&json)?;
+        let state: DbState = serde_json::from_str(&*json)?;
         state.validate()?;
         Ok(Self {
             path,
             passphrase: Zeroizing::new(passphrase.to_string()),
             state,
             dirty: false,
-            lock_file,
+            lock_file: Some(lock_file),
         })
     }
     pub fn commit(&mut self) -> Result<()> {
         if !self.dirty {
             return Ok(());
         }
+        self.lock_exclusive()?;
+        Self::validate_path(&self.path)?;
         let json = serde_json::to_string_pretty(&self.state)?;
         let encrypted = crypto::encrypt(&json, &self.passphrase)?;
         Self::atomic_write(&self.path, &encrypted)?;
@@ -520,6 +599,7 @@ impl Database {
         Ok(())
     }
     pub fn create_table(&mut self, name: &str, columns: Vec<(&str, ColumnType)>) -> Result<()> {
+        self.lock_exclusive()?;
         Self::validate_name(name, config::MAX_TABLE_NAME_LEN, "Table")?;
         if columns.is_empty() || columns.len() > config::MAX_COLUMNS_PER_TABLE {
             return Err(Error::InvalidInput(format!(
@@ -527,15 +607,20 @@ impl Database {
                 config::MAX_COLUMNS_PER_TABLE
             )));
         }
+        let mut seen = HashSet::new();
         let mut col_defs = Vec::new();
-        let mut col_names_for_log = Vec::new();
         for (col_name, col_type) in &columns {
+            if !seen.insert(*col_name) {
+                return Err(Error::InvalidInput(format!(
+                    "Duplicate column name: {}",
+                    col_name
+                )));
+            }
             Self::validate_name(col_name, config::MAX_COLUMN_NAME_LEN, "Column")?;
             col_defs.push(ColumnDef {
                 name: col_name.to_string(),
                 col_type: *col_type,
             });
-            col_names_for_log.push((*col_name, *col_type));
         }
         if self.state.tables.contains_key(name) {
             return Err(Error::TableExists(name.to_string()));
@@ -546,18 +631,19 @@ impl Database {
         self.state.logs.push(LogEntry::new(
             "CREATE TABLE",
             name,
-            Some(format!("Columns: {:?}", col_names_for_log)),
+            Some(format!("Columns: {:?}", columns)),
         ));
-        log::trim_logs_if_needed(&mut self.state.logs);
+        log::trim_logs_if_needed(&mut self.state.logs, &self.path)?;
         self.dirty = true;
         Ok(())
     }
     pub fn drop_table(&mut self, name: &str) -> Result<()> {
+        self.lock_exclusive()?;
         if self.state.tables.remove(name).is_some() {
             self.state
                 .logs
                 .push(LogEntry::new("DROP TABLE", name, None));
-            log::trim_logs_if_needed(&mut self.state.logs);
+            log::trim_logs_if_needed(&mut self.state.logs, &self.path)?;
             self.dirty = true;
             Ok(())
         } else {
@@ -583,13 +669,14 @@ impl Database {
             .collect())
     }
     pub fn insert(&mut self, table: &str, row: Vec<Value>) -> Result<()> {
+        self.lock_exclusive()?;
         let table_data = self
             .state
             .tables
             .get_mut(table)
             .ok_or_else(|| Error::TableNotFound(table.to_string()))?;
         crate::data::insert(table_data, row, &mut self.state.logs)?;
-        log::trim_logs_if_needed(&mut self.state.logs);
+        log::trim_logs_if_needed(&mut self.state.logs, &self.path)?;
         self.dirty = true;
         Ok(())
     }
@@ -613,6 +700,7 @@ impl Database {
         set_col: &str,
         new_val: Value,
     ) -> Result<usize> {
+        self.lock_exclusive()?;
         let table_data = self
             .state
             .tables
@@ -621,12 +709,13 @@ impl Database {
         let count =
             crate::data::update(table_data, filter, set_col, new_val, &mut self.state.logs)?;
         if count > 0 {
-            log::trim_logs_if_needed(&mut self.state.logs);
+            log::trim_logs_if_needed(&mut self.state.logs, &self.path)?;
             self.dirty = true;
         }
         Ok(count)
     }
     pub fn delete(&mut self, table: &str, filter: &dyn Fn(&[Value]) -> bool) -> Result<usize> {
+        self.lock_exclusive()?;
         let table_data = self
             .state
             .tables
@@ -634,7 +723,7 @@ impl Database {
             .ok_or_else(|| Error::TableNotFound(table.to_string()))?;
         let removed = crate::data::delete(table_data, filter, &mut self.state.logs)?;
         if removed > 0 {
-            log::trim_logs_if_needed(&mut self.state.logs);
+            log::trim_logs_if_needed(&mut self.state.logs, &self.path)?;
             self.dirty = true;
         }
         Ok(removed)
