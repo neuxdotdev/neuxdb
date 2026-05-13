@@ -1,0 +1,10 @@
+pub const DELIMITER: u8 = b'|';
+pub const HEADER_MAGIC: &str = "[NEUXDB:v1]";
+pub const INTEGRITY_PREFIX: &str = "SHA=";
+pub const FILE_EXTENSION: &str = "ndbx";
+pub const MAX_TABLE_NAME_LEN: usize = 64;
+pub const MAX_COLUMN_NAME_LEN: usize = 64;
+pub const MAX_COLUMNS_PER_TABLE: usize = 100;
+pub const MAX_LOG_ENTRIES: usize = 10_000;
+pub const MIN_PASSPHRASE_LEN: usize = 8;
+pub const ALLOWED_NAME_REGEX: &str = r"^[a-zA-Z_][a-zA-Z0-9_]*$";
